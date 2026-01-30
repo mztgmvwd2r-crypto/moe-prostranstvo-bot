@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 Webhook version of Moe Prostranstvo bot for web service deployment
 """
-
 import os
 import logging
 import asyncio
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, ContextTypes, filters
 
@@ -25,16 +23,20 @@ logger = logging.getLogger(__name__)
 # Get configuration from environment
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your web service URL
-PORT = int(os.getenv("PORT", 8080))
+PORT = int(os.getenv("PORT", 10000))
 
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set")
+
+if not WEBHOOK_URL:
+    raise ValueError("WEBHOOK_URL environment variable not set")
 
 # Initialize Flask app
 app = Flask(__name__)
 
 # Initialize bot application globally
 application = None
+webhook_configured = False
 
 
 def setup_handlers(app_instance):
@@ -52,7 +54,7 @@ def setup_handlers(app_instance):
             bot.TAROT_CARDS: [CallbackQueryHandler(bot.tarot_draw_cards, pattern="^tarot_(1|3)card")],
             bot.OWN_DECK_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.own_deck_question_received)],
             bot.OWN_DECK_CARDS: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.own_deck_cards_received)]
-        },
+        ],
         fallbacks=[CommandHandler("cancel", bot.cancel)]
     )
     app_instance.add_handler(tarot_conv)
@@ -74,79 +76,108 @@ def setup_handlers(app_instance):
     app_instance.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_text_message))
 
 
-async def setup_webhook_async():
-    """Setup webhook with Telegram asynchronously"""
-    global application
+def init_bot():
+    """Initialize bot application and setup webhook"""
+    global application, webhook_configured
     
-    # Initialize application
-    application = Application.builder().token(TOKEN).build()
+    logger.info("Initializing bot application...")
     
-    # Setup handlers
-    setup_handlers(application)
+    # Create event loop for async operations
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     
-    # Initialize the application
-    await application.initialize()
-    await application.bot.initialize()
-    
-    if WEBHOOK_URL:
+    try:
+        # Initialize application
+        application = Application.builder().token(TOKEN).build()
+        
+        # Setup handlers
+        setup_handlers(application)
+        
+        # Initialize the application
+        loop.run_until_complete(application.initialize())
+        loop.run_until_complete(application.bot.initialize())
+        
+        # Setup webhook
         webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
         logger.info(f"Setting webhook to: {webhook_url}")
-        await application.bot.set_webhook(url=webhook_url)
-        logger.info("Webhook set successfully!")
-    else:
-        logger.warning("WEBHOOK_URL not set. Webhook not configured.")
-    
-    # Start the application
-    await application.start()
-    logger.info("Application started successfully!")
+        loop.run_until_complete(application.bot.set_webhook(url=webhook_url))
+        logger.info("✅ Webhook set successfully!")
+        
+        # Start the application
+        loop.run_until_complete(application.start())
+        logger.info("✅ Application started successfully!")
+        
+        webhook_configured = True
+        
+    except Exception as e:
+        logger.error(f"❌ Error initializing bot: {e}")
+        raise
+
+
+# Initialize bot on startup
+logger.info("=" * 60)
+logger.info("Starting Moe Prostranstvo Bot (Webhook Mode)")
+logger.info("=" * 60)
+init_bot()
 
 
 @app.route('/')
 def index():
     """Health check endpoint"""
-    return "Moe Prostranstvo Bot is running! 🌿", 200
+    return jsonify({
+        "status": "healthy",
+        "bot": "moe_prostranstvo",
+        "webhook_configured": webhook_configured
+    })
 
 
 @app.route('/health')
 def health():
-    """Health check for monitoring"""
-    return {"status": "healthy", "bot": "moe_prostranstvo"}, 200
+    """Health check endpoint"""
+    return jsonify({
+        "status": "healthy",
+        "bot": "moe_prostranstvo",
+        "webhook_configured": webhook_configured
+    })
 
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
-    """Handle incoming webhook updates from Telegram"""
+    """Handle incoming updates from Telegram"""
+    if not application:
+        logger.error("Application not initialized")
+        return jsonify({"error": "Bot not initialized"}), 500
+    
     try:
-        if application is None:
-            logger.error("Application not initialized")
-            return "Application not ready", 503
+        # Get update from request
+        update_data = request.get_json(force=True)
         
-        update = Update.de_json(request.get_json(force=True), application.bot)
+        # Create Update object
+        update = Update.de_json(update_data, application.bot)
         
-        # Process update in async context
-        asyncio.run(application.process_update(update))
+        # Process update asynchronously
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.process_update(update))
+        loop.close()
         
-        return "OK", 200
+        return jsonify({"ok": True})
+    
     except Exception as e:
-        logger.error(f"Error processing update: {e}", exc_info=True)
-        return "Error", 500
-
-
-def initialize_bot():
-    """Initialize bot on startup"""
-    logger.info("Initializing bot...")
-    try:
-        asyncio.run(setup_webhook_async())
-        logger.info("Bot initialized successfully!")
-    except Exception as e:
-        logger.error(f"Failed to initialize bot: {e}", exc_info=True)
-        raise
+        logger.error(f"Error processing update: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == '__main__':
-    # Setup webhook on startup
-    initialize_bot()
+    logger.info("=" * 60)
+    logger.info(f"Your service is live 🎉")
+    logger.info("")
+    logger.info("/" * 60)
+    logger.info("")
+    logger.info(f"Available at your primary URL {WEBHOOK_URL}")
+    logger.info("")
+    logger.info("/" * 60)
+    logger.info("")
     
     # Run Flask app
-    logger.info(f"Starting webhook server on port {PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False)
