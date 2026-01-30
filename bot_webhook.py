@@ -9,6 +9,7 @@ import asyncio
 from flask import Flask, request, jsonify
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, ContextTypes, filters
+from telegram.request import HTTPXRequest
 
 # Import bot handlers from main bot file
 import bot
@@ -94,8 +95,17 @@ def init_bot():
     asyncio.set_event_loop(event_loop)
     
     try:
-        # Initialize application
-        application = Application.builder().token(TOKEN).build()
+        # Create custom request with longer timeout for free tier cold starts
+        request = HTTPXRequest(
+            connection_pool_size=8,
+            connect_timeout=60.0,
+            read_timeout=60.0,
+            write_timeout=60.0,
+            pool_timeout=60.0
+        )
+        
+        # Initialize application with custom request
+        application = Application.builder().token(TOKEN).request(request).build()
         
         # Setup handlers
         setup_handlers(application)
