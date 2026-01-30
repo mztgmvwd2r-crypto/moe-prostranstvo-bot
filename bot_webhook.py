@@ -37,6 +37,7 @@ app = Flask(__name__)
 # Initialize bot application globally
 application = None
 webhook_configured = False
+event_loop = None
 
 
 def setup_handlers(app_instance):
@@ -55,7 +56,10 @@ def setup_handlers(app_instance):
             bot.OWN_DECK_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.own_deck_question_received)],
             bot.OWN_DECK_CARDS: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.own_deck_cards_received)]
         },
-        fallbacks=[CommandHandler("cancel", bot.cancel)]
+        fallbacks=[CommandHandler("cancel", bot.cancel)],
+        per_message=False,
+        per_chat=True,
+        per_user=True
     )
     app_instance.add_handler(tarot_conv)
     
@@ -65,11 +69,14 @@ def setup_handlers(app_instance):
         states={
             bot.DIARY_ENTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.diary_save_entry)]
         },
-        fallbacks=[CommandHandler("cancel", bot.cancel)]
+        fallbacks=[CommandHandler("cancel", bot.cancel)],
+        per_message=False,
+        per_chat=True,
+        per_user=True
     )
     app_instance.add_handler(diary_conv)
     
-    # Callback query handler
+    # Callback query handler (must be after ConversationHandlers)
     app_instance.add_handler(CallbackQueryHandler(bot.callback_router))
     
     # Text message handler
@@ -78,13 +85,13 @@ def setup_handlers(app_instance):
 
 def init_bot():
     """Initialize bot application and setup webhook"""
-    global application, webhook_configured
+    global application, webhook_configured, event_loop
     
     logger.info("Initializing bot application...")
     
-    # Create event loop for async operations
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    # Create persistent event loop
+    event_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(event_loop)
     
     try:
         # Initialize application
@@ -94,17 +101,17 @@ def init_bot():
         setup_handlers(application)
         
         # Initialize the application
-        loop.run_until_complete(application.initialize())
-        loop.run_until_complete(application.bot.initialize())
+        event_loop.run_until_complete(application.initialize())
+        event_loop.run_until_complete(application.bot.initialize())
         
         # Setup webhook
         webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
         logger.info(f"Setting webhook to: {webhook_url}")
-        loop.run_until_complete(application.bot.set_webhook(url=webhook_url))
+        event_loop.run_until_complete(application.bot.set_webhook(url=webhook_url))
         logger.info("✅ Webhook set successfully!")
         
         # Start the application
-        loop.run_until_complete(application.start())
+        event_loop.run_until_complete(application.start())
         logger.info("✅ Application started successfully!")
         
         webhook_configured = True
@@ -144,7 +151,7 @@ def health():
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
     """Handle incoming updates from Telegram"""
-    if not application:
+    if not application or not event_loop:
         logger.error("Application not initialized")
         return jsonify({"error": "Bot not initialized"}), 500
     
@@ -155,16 +162,14 @@ def webhook():
         # Create Update object
         update = Update.de_json(update_data, application.bot)
         
-        # Process update asynchronously
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(application.process_update(update))
-        loop.close()
+        # Process update using the persistent event loop
+        asyncio.set_event_loop(event_loop)
+        event_loop.run_until_complete(application.process_update(update))
         
         return jsonify({"ok": True})
     
     except Exception as e:
-        logger.error(f"Error processing update: {e}")
+        logger.error(f"Error processing update: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
