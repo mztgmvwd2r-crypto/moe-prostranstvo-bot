@@ -3,7 +3,13 @@ import os
 from datetime import datetime, date
 from typing import Dict, List, Optional
 
-DATA_DIR = "/home/ubuntu/moe_prostranstvo/data"
+# Use relative path for cloud deployment
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+# Create data directory if it doesn't exist
+os.makedirs(DATA_DIR, exist_ok=True)
+
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 DIARY_FILE = os.path.join(DATA_DIR, "diary.json")
 DAILY_ENERGY_FILE = os.path.join(DATA_DIR, "daily_energy.json")
