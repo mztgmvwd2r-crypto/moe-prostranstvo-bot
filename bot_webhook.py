@@ -54,7 +54,7 @@ def setup_handlers(app_instance):
             bot.TAROT_CARDS: [CallbackQueryHandler(bot.tarot_draw_cards, pattern="^tarot_(1|3)card")],
             bot.OWN_DECK_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.own_deck_question_received)],
             bot.OWN_DECK_CARDS: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.own_deck_cards_received)]
-        ],
+        },
         fallbacks=[CommandHandler("cancel", bot.cancel)]
     )
     app_instance.add_handler(tarot_conv)
